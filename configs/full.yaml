@@ -18,8 +18,9 @@ data:
 
 train:
   epochs: 3
-  batch_size: 16
-  grad_accum: 1
+  # Same memory constraint as LoRA, tighter because every encoder weight gets a gradient.
+  batch_size: 4
+  grad_accum: 4
   lr: 1.0e-3                 # head
   encoder_lr: 3.0e-5         # encoder
   weight_decay: 0.01

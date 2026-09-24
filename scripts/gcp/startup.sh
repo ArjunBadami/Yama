@@ -82,6 +82,7 @@ $PY -c "import torch; from transformers.models.modernbert.modeling_modernbert im
 # --- data ------------------------------------------------------------------
 mkdir -p data/processed
 export HF_HUB_DISABLE_SYMLINKS_WARNING=1 TOKENIZERS_PARALLELISM=false HF_HOME=/opt/hf-cache
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 if gcloud storage ls "$BUCKET/data/processed/train.jsonl" >/dev/null 2>&1; then
   gcloud storage rsync -r "$BUCKET/data/processed" data/processed
 else

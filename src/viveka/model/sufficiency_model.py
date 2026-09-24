@@ -105,6 +105,19 @@ class SufficiencyModel(nn.Module):
         else:
             raise ValueError(f"unknown model.mode {mode!r}; expected frozen|lora|full")
 
+        if mode in ("lora", "full") and model_cfg.get("gradient_checkpointing", True):
+            # Backward through 2048-token sequences does not fit a 24GB L4 at batch 16.
+            # Recompute activations instead of storing them. LoRA needs input grads or the
+            # checkpointed layers receive no gradient.
+            if hasattr(encoder, "enable_input_require_grads"):
+                encoder.enable_input_require_grads()
+            if hasattr(encoder, "gradient_checkpointing_enable"):
+                try:
+                    encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+                except TypeError:
+                    encoder.gradient_checkpointing_enable()
+                log.info("gradient checkpointing enabled")
+
         model = cls(
             encoder,
             hidden,

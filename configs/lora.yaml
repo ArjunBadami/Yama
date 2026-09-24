@@ -24,8 +24,10 @@ data:
 
 train:
   epochs: 3
-  batch_size: 16
-  grad_accum: 1
+  # 16 sequences at 2048 tokens OOMs a 24GB L4 once a long batch shows up.
+  # 4 x 4 keeps the same optimizer step (and the same 37809-step schedule) at ~1/4 the activation memory.
+  batch_size: 4
+  grad_accum: 4
   lr: 2.0e-4                 # LoRA params + head
   encoder_lr: 2.0e-5         # only used in mode=full
   weight_decay: 0.01
