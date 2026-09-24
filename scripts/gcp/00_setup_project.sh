@@ -46,24 +46,27 @@ for role in roles/storage.objectAdmin roles/aiplatform.user roles/logging.logWri
 done
 
 info "billing budget (\$$BUDGET_USD/month, alerts at 50/90/100%)"
-BILLING_ACCOUNT="$(gcloud billing projects describe "$PROJECT" --format='value(billingAccountName)' 2>/dev/null || true)"
+# Never let this step block: no prompts, hard timeout, and any failure just prints the console link.
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1
+BUDGET_URL="https://console.cloud.google.com/billing/budgets?project=$PROJECT"
+BILLING_ACCOUNT="$(timeout 30 gcloud billing projects describe "$PROJECT" --format='value(billingAccountName)' 2>/dev/null || true)"
 if [ -z "$BILLING_ACCOUNT" ]; then
-  warn "could not read the billing account (need roles/billing.viewer); create a budget manually:"
-  warn "  https://console.cloud.google.com/billing/budgets?project=$PROJECT"
-elif gcloud billing budgets list --billing-account="${BILLING_ACCOUNT#billingAccounts/}" \
+  warn "could not read the billing account (need roles/billing.viewer). Create the budget manually: $BUDGET_URL"
+elif timeout 60 gcloud billing budgets list --billing-account="${BILLING_ACCOUNT#billingAccounts/}" \
        --filter="displayName=viveka-$PROJECT" --format='value(name)' 2>/dev/null | grep -q .; then
   info "budget viveka-$PROJECT exists"
 else
-  gcloud services enable billingbudgets.googleapis.com --project "$PROJECT" >/dev/null 2>&1 || true
-  if gcloud billing budgets create --billing-account="${BILLING_ACCOUNT#billingAccounts/}" \
+  timeout 60 gcloud services enable billingbudgets.googleapis.com --project "$PROJECT" >/dev/null 2>&1 || true
+  if timeout 60 gcloud billing budgets create --billing-account="${BILLING_ACCOUNT#billingAccounts/}" \
        --display-name="viveka-$PROJECT" --budget-amount="${BUDGET_USD}USD" \
        --filter-projects="projects/$PROJECT" \
        --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 >/dev/null 2>&1; then
     info "budget created; alerts go to billing admins/users by email"
   else
-    warn "budget creation failed (needs roles/billing.costsManager on the billing account). Create it manually:"
-    warn "  https://console.cloud.google.com/billing/budgets?project=$PROJECT"
+    warn "budget not created (needs roles/billing.costsManager on the billing account, or the command timed out)."
+    warn "Create it manually (2 minutes): $BUDGET_URL"
   fi
 fi
+unset CLOUDSDK_CORE_DISABLE_PROMPTS
 
 info "done. next: scripts/gcp/01_check_quota.sh"
