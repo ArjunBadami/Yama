@@ -17,11 +17,12 @@ export GPU_COUNT="${GPU_COUNT:-1}"
 export BOOT_DISK_GB="${BOOT_DISK_GB:-200}"
 export SPOT="${SPOT:-true}"                             # spot VMs are ~60-70% cheaper; training auto-resumes
 
-# Deep Learning VM image. List current families with:
+# Deep Learning VM image. `pytorch-latest-gpu` was retired; pin a real family.
+# List current ones with:
 #   gcloud compute images list --project deeplearning-platform-release --no-standard-images \
 #     --filter="family~pytorch" --format="value(family)" | sort -u
 export IMAGE_PROJECT="${IMAGE_PROJECT:-deeplearning-platform-release}"
-export IMAGE_FAMILY="${IMAGE_FAMILY:-pytorch-latest-gpu}"
+export IMAGE_FAMILY="${IMAGE_FAMILY:-pytorch-2-9-cu129-ubuntu-2204-nvidia-580}"
 
 # Service account the VM runs as (created by 00_setup_project.sh)
 export SA_NAME="${SA_NAME:-viveka-train}"
