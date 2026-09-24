@@ -20,7 +20,7 @@ for entry in "${QUEUE[@]}"; do
 done
 
 # gcloud splits --metadata on commas, so the queue uses ';' between entries.
-META="viveka-bucket=$BUCKET,viveka-run-queue=$RUN_QUEUE,viveka-shutdown-when-done=$SHUTDOWN_WHEN_DONE"
+META="viveka-bucket=$BUCKET,viveka-run-queue=$RUN_QUEUE,viveka-shutdown-when-done=$SHUTDOWN_WHEN_DONE,viveka-max-hours=$MAX_VM_HOURS"
 META="$META,viveka-data-sources=${DATA_SOURCES// /+},viveka-data-limit=$DATA_LIMIT,viveka-eval-limit=$EVAL_LIMIT,viveka-data-pos-rate=$DATA_POS_RATE"
 META="$META,install-nvidia-driver=True"
 
@@ -66,7 +66,8 @@ Follow along with:
   scripts/gcp/04_logs.sh                  # tail the training log
   gcloud storage ls $BUCKET/runs/         # one folder per run; DONE marker when finished
 
-The VM stops itself after the queue (SHUTDOWN_WHEN_DONE=$SHUTDOWN_WHEN_DONE). Fetch results with:
+The VM stops itself after the queue (SHUTDOWN_WHEN_DONE=$SHUTDOWN_WHEN_DONE), and unconditionally
+after MAX_VM_HOURS=$MAX_VM_HOURS hours (~\$$(awk "BEGIN{printf \"%.2f\", $MAX_VM_HOURS*0.35}") worst case on spot). Fetch results with:
   scripts/gcp/05_fetch_results.sh
 If the VM is preempted, just run this script again; finished runs are skipped and the
 in-progress run resumes from its last checkpoint.

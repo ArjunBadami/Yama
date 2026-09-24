@@ -29,4 +29,25 @@ done
 gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA_EMAIL" \
   --role roles/compute.instanceAdmin.v1 --condition=None --quiet >/dev/null
 
+info "billing budget (\$$BUDGET_USD/month, alerts at 50/90/100%)"
+BILLING_ACCOUNT="$(gcloud billing projects describe "$PROJECT" --format='value(billingAccountName)' 2>/dev/null || true)"
+if [ -z "$BILLING_ACCOUNT" ]; then
+  warn "could not read the billing account (need roles/billing.viewer); create a budget manually:"
+  warn "  https://console.cloud.google.com/billing/budgets?project=$PROJECT"
+elif gcloud billing budgets list --billing-account="${BILLING_ACCOUNT#billingAccounts/}" \
+       --filter="displayName=viveka-$PROJECT" --format='value(name)' 2>/dev/null | grep -q .; then
+  info "budget viveka-$PROJECT exists"
+else
+  gcloud services enable billingbudgets.googleapis.com --project "$PROJECT" >/dev/null 2>&1 || true
+  if gcloud billing budgets create --billing-account="${BILLING_ACCOUNT#billingAccounts/}" \
+       --display-name="viveka-$PROJECT" --budget-amount="${BUDGET_USD}USD" \
+       --filter-projects="projects/$PROJECT" \
+       --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 >/dev/null 2>&1; then
+    info "budget created; alerts go to billing admins/users by email"
+  else
+    warn "budget creation failed (needs roles/billing.costsManager on the billing account). Create it manually:"
+    warn "  https://console.cloud.google.com/billing/budgets?project=$PROJECT"
+  fi
+fi
+
 info "done. next: scripts/gcp/01_check_quota.sh"

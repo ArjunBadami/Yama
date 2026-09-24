@@ -20,15 +20,25 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import string
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from tqdm import tqdm
 
 from ..schema import Example, read_jsonl, write_jsonl
-from .client import CachedTeacher, make_teacher, parse_json
+from .client import (
+    DEFAULT_MAX_CALLS,
+    CachedTeacher,
+    TeacherBudgetExceeded,
+    estimate_calls,
+    estimate_cost_usd,
+    make_teacher,
+    parse_json,
+)
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +111,7 @@ def relabel(
     passthrough = [ex for ex in examples if not ex.meta.get("answer")]
     out: list[Example] = list(passthrough)
     agree = disagree = 0
+    budget_hit = False
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(judge, teacher, ex, k, temperature): ex for ex in todo}
@@ -108,6 +119,13 @@ def relabel(
             ex = futs[fut]
             try:
                 res = fut.result()
+            except TeacherBudgetExceeded:
+                # Stop spending: cancel everything not yet started, pass the rest through unlabelled.
+                for f in futs:
+                    f.cancel()
+                budget_hit = True
+                out.append(ex)
+                continue
             except Exception as e:
                 log.warning("teacher failed on %s: %s", ex.id, e)
                 out.append(ex)
@@ -143,7 +161,10 @@ def relabel(
         "flipped_to_insufficient": sum(
             1 for e in out if e.category == "teacher_labelled" and not e.sufficient and e.meta["heuristic_label"]
         ),
+        "budget_hit": budget_hit,
     }
+    if budget_hit:
+        log.error("teacher call cap reached; %d examples passed through unlabelled", len(todo) - (agree + disagree))
     return out, stats
 
 
@@ -158,16 +179,45 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--model", default=None)
     p.add_argument("--cache", type=Path, default=Path("data/teacher_cache/label.jsonl"))
+    p.add_argument(
+        "--max-calls",
+        type=int,
+        default=None,
+        help=f"hard cap on billed teacher calls (default {DEFAULT_MAX_CALLS}); the job stops when reached",
+    )
+    p.add_argument("--yes", action="store_true", help="skip the cost confirmation prompt")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     examples = read_jsonl(args.inp, limit=args.limit)
-    teacher = make_teacher(cache_path=args.cache, model=args.model)
+    n_label = sum(1 for e in examples if e.meta.get("answer"))
+    model = args.model or os.environ.get("VIVEKA_TEACHER_MODEL", "gemini-2.5-flash")
+    n_calls = estimate_calls(n_label, args.k)
+    cap = (
+        args.max_calls
+        if args.max_calls is not None
+        else int(os.environ.get("VIVEKA_TEACHER_MAX_CALLS", DEFAULT_MAX_CALLS))
+    )
+    print(
+        f"labelling {n_label} examples x k={args.k} = up to {n_calls} calls to {model} "
+        f"(~${estimate_cost_usd(n_calls, model):.2f} at list price; cache hits are free). Hard cap: {cap} calls."
+    )
+    if n_calls > cap:
+        print(f"NOTE: {n_calls} > cap {cap}; the job will stop at the cap. Pass --max-calls {n_calls} to allow all.")
+    if not args.yes and sys.stdin.isatty():
+        if input("proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("aborted")
+            return
+
+    teacher = make_teacher(cache_path=args.cache, model=args.model, max_calls=cap)
     out, stats = relabel(
         examples, teacher, k=args.k, temperature=args.temperature, min_correct=args.min_correct, workers=args.workers
     )
     write_jsonl(args.out, out)
+    stats["teacher_usage"] = teacher.usage()
     print(json.dumps(stats, indent=2))
+    if stats["budget_hit"]:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

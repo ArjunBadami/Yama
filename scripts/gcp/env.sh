@@ -34,6 +34,13 @@ export SA_EMAIL="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 export RUN_QUEUE="${RUN_QUEUE:-frozen-v1:configs/base.yaml;lora-v1:configs/lora.yaml;full-v1:configs/full.yaml}"
 export SHUTDOWN_WHEN_DONE="${SHUTDOWN_WHEN_DONE:-true}" # stop the VM after the queue to stop billing
 
+# Hard cost caps.
+# The VM stops itself MAX_VM_HOURS after boot regardless of what is running (watchdog in startup.sh).
+# At ~$0.30/hr spot for g2-standard-8, 8h is ~$2.50 worst case. Raise for longer queues.
+export MAX_VM_HOURS="${MAX_VM_HOURS:-8}"
+# Billing budget with email alerts at 50/90/100% (created by 00_setup_project.sh; needs billing perms).
+export BUDGET_USD="${BUDGET_USD:-50}"
+
 # Dataset. If $BUCKET/data/processed/train.jsonl does not exist when the VM boots,
 # the VM builds it from these sources and uploads it (so nothing has to be built locally).
 export DATA_DIR="${DATA_DIR:-data/processed}"           # optional local copy to push with 02_push_code_and_data.sh

@@ -252,9 +252,26 @@ After iterating on code locally: `git push`, then in Cloud Shell
   in `us-central1`. New projects default to 0; `01_check_quota.sh` prints the request link.
   Approval is usually minutes to a day for L4.
 
-Rough cost: g2-standard-8 spot is ~$0.25–0.35/hr in us-central1; a 3-epoch LoRA run over ~150k
-examples is 1.5–2 hours. Expect about $1 per experiment on spot, under $10 for A/B/C with retries.
-The 200GB boot disk costs ~$20/month while the VM exists (stopped or not); tear it down between sessions.
+### Cost and hard caps
+
+What the queue spends: one `g2-standard-8` spot VM at ~$0.25–0.35/hr (on-demand ~$0.85/hr). A
+3-epoch LoRA run over ~150k examples is 1.5–2 hours; the default A → B → C queue is ~4–5 hours,
+about $2. The 200GB boot disk is ~$20/month while the VM exists (stopped or not); `99_teardown.sh`
+between sessions. **The training queue never calls Gemini**; the teacher only runs when you invoke
+`viveka.teacher.*` yourself.
+
+Three independent caps, all on by default:
+
+| cap | where | default | what it bounds |
+|---|---|---|---|
+| VM watchdog | `startup.sh`, `MAX_VM_HOURS` in `env.sh` | 8 h | stops the VM after N hours since boot no matter what (hang, bug, failed self-stop). ~$3 worst case per boot on spot. |
+| Teacher call cap | `--max-calls` / `VIVEKA_TEACHER_MAX_CALLS` | 1000 billed calls | a labelling or generation job stops at the cap (cache hits are free). 1000 Flash calls ≈ $0.25–1. The CLIs print an estimate and ask for confirmation first (`--yes` to skip). |
+| Billing budget | `00_setup_project.sh`, `BUDGET_USD` | $50/month | email alerts at 50/90/100% to billing admins. Alerts only; GCP budgets do not stop spend. |
+
+Teacher model: `gemini-2.5-flash` on Vertex AI (`--model` or `VIVEKA_TEACHER_MODEL` to change).
+Roughly $0.30/M input and $2.50/M output tokens; a labelling call is ~$0.0002, a generation call
+~$0.001. Prices in `teacher/client.py::PRICES` are approximate list prices; verify against the
+[Vertex pricing page](https://cloud.google.com/vertex-ai/generative-ai/pricing).
 
 ## Experiments
 

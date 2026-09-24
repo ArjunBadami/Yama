@@ -25,11 +25,25 @@ IFS=';' read -ra QUEUE <<< "$RUN_QUEUE"
 echo "queue (${#QUEUE[@]}):"; for e in "${QUEUE[@]}"; do echo "  ${e%%:*}  <-  ${e#*:}"; done
 
 finish() {
+  [ -n "${WATCHDOG_PID:-}" ] && kill "$WATCHDOG_PID" 2>/dev/null
   if [ "$SHUTDOWN" = "true" ]; then
     echo "stopping VM $NAME ($ZONE)"
     gcloud compute instances stop "$NAME" --zone "$ZONE" --quiet || true
   fi
 }
+
+# --- hard cost cap: stop the VM after MAX_HOURS no matter what ------------
+# Independent of training success/failure/hangs. Preemption restarts reset the clock,
+# but each boot is capped, so spend is bounded per boot.
+MAX_HOURS="$(md viveka-max-hours || echo 8)"
+(
+  sleep "$(awk "BEGIN{print int($MAX_HOURS*3600)}")"
+  echo "!!! watchdog: $MAX_HOURS hours elapsed since boot; forcing VM stop $(date -u +%FT%TZ)"
+  gcloud storage cp "$LOG" "$BUCKET/watchdog-$(date -u +%Y%m%dT%H%M%SZ).log" 2>/dev/null || true
+  gcloud compute instances stop "$NAME" --zone "$ZONE" --quiet
+) &
+WATCHDOG_PID=$!
+echo "watchdog armed: VM will stop after $MAX_HOURS h (pid $WATCHDOG_PID)"
 
 is_done() { gcloud storage ls "$BUCKET/runs/$1/DONE" >/dev/null 2>&1; }
 

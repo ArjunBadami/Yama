@@ -19,7 +19,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -27,7 +29,14 @@ from tqdm import tqdm
 
 from ..datasets.degrade import VariantSpec, build_variants, category_counts, label_balance
 from ..schema import Example, write_jsonl
-from .client import CachedTeacher, make_teacher, parse_json
+from .client import (
+    DEFAULT_MAX_CALLS,
+    CachedTeacher,
+    TeacherBudgetExceeded,
+    estimate_cost_usd,
+    make_teacher,
+    parse_json,
+)
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +125,11 @@ def generate(
         for fut in tqdm(as_completed(futs), total=len(futs), desc="synthetic"):
             try:
                 r = fut.result()
+            except TeacherBudgetExceeded:
+                for f in futs:
+                    f.cancel()
+                log.error("teacher call cap reached; stopping generation with %d questions", len(raws))
+                break
             except Exception as e:
                 log.warning("generation failed: %s", e)
                 continue
@@ -154,10 +168,35 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--model", default=None)
     p.add_argument("--cache", type=Path, default=Path("data/teacher_cache/synthetic.jsonl"))
+    p.add_argument(
+        "--max-calls",
+        type=int,
+        default=None,
+        help=f"hard cap on billed teacher calls (default {DEFAULT_MAX_CALLS}); generation stops when reached",
+    )
+    p.add_argument("--yes", action="store_true", help="skip the cost confirmation prompt")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    teacher = make_teacher(cache_path=args.cache, model=args.model)
+    model = args.model or os.environ.get("VIVEKA_TEACHER_MODEL", "gemini-2.5-flash")
+    cap = (
+        args.max_calls
+        if args.max_calls is not None
+        else int(os.environ.get("VIVEKA_TEACHER_MAX_CALLS", DEFAULT_MAX_CALLS))
+    )
+    # generation prompts are ~350 tokens in, ~450 out
+    print(
+        f"generating {args.n} questions = {args.n} calls to {model} "
+        f"(~${estimate_cost_usd(args.n, model, in_tokens=350, out_tokens=450):.2f} at list price). Hard cap: {cap} calls."
+    )
+    if args.n > cap:
+        print(f"NOTE: {args.n} > cap {cap}; generation will stop at the cap. Pass --max-calls {args.n} to allow all.")
+    if not args.yes and sys.stdin.isatty():
+        if input("proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("aborted")
+            return
+
+    teacher = make_teacher(cache_path=args.cache, model=args.model, max_calls=cap)
     examples, raws = generate(
         teacher, args.n, args.domains, seed=args.seed, temperature=args.temperature, workers=args.workers
     )
@@ -171,6 +210,7 @@ def main(argv: list[str] | None = None) -> None:
                 "source_questions": len(raws),
                 "examples": label_balance(examples),
                 "categories": category_counts(examples),
+                "teacher_usage": teacher.usage(),
             },
             indent=2,
         )
