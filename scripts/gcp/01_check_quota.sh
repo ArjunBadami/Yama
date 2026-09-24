@@ -4,17 +4,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.." && source scripts/gcp/env.sh
 
+show_quotas() {  # $1 = json with a top-level "quotas" list, $2 = substring pattern(s) comma-separated
+  python3 -c '
+import json, sys
+keys = sys.argv[1].split(",")
+qs = json.load(sys.stdin).get("quotas", [])
+rows = [q for q in qs if any(k in q["metric"] for k in keys)]
+for q in rows:
+    print("  {:<38} limit={:<7g} usage={:g}".format(q["metric"], q["limit"], q["usage"]))
+sys.exit(0 if rows else 1)
+' "$2"
+}
+
 info "GPU quotas in $REGION (limit / usage)"
-# `describe` has no --filter; flatten one quota per line and grep.
-gcloud compute regions describe "$REGION" --project "$PROJECT" \
-  --flatten="quotas[]" --format="table[no-heading](quotas.metric,quotas.limit,quotas.usage)" \
-  | grep -E "NVIDIA_L4|NVIDIA_T4|NVIDIA_A100" | column -t
+gcloud compute regions describe "$REGION" --project "$PROJECT" --format=json | show_quotas - "NVIDIA_L4,NVIDIA_T4,NVIDIA_A100" || true
 
 echo
 info "project-wide: GPUS_ALL_REGIONS"
-if ! gcloud compute project-info describe --project "$PROJECT" \
-      --flatten="quotas[]" --format="table[no-heading](quotas.metric,quotas.limit,quotas.usage)" \
-      | grep GPUS_ALL_REGIONS | column -t | grep GPUS_ALL_REGIONS; then
+if ! gcloud compute project-info describe --project "$PROJECT" --format=json | show_quotas - "GPUS_ALL_REGIONS"; then
   warn "GPUS_ALL_REGIONS is not listed for this project. That usually means the billing account is"
   warn "still on the Free Trial, which cannot use GPUs at all. Upgrade to a paid account first:"
   warn "  https://console.cloud.google.com/billing?project=$PROJECT  (Upgrade button)"
