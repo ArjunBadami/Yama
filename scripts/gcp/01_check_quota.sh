@@ -5,15 +5,16 @@ set -euo pipefail
 cd "$(dirname "$0")/../.." && source scripts/gcp/env.sh
 
 info "GPU quotas in $REGION (limit / usage)"
+# `describe` has no --filter; flatten one quota per line and grep.
 gcloud compute regions describe "$REGION" --project "$PROJECT" \
-  --flatten="quotas[]" --filter="quotas.metric~'NVIDIA_L4|NVIDIA_T4|NVIDIA_A100'" \
-  --format="table(quotas.metric,quotas.limit,quotas.usage)"
+  --flatten="quotas[]" --format="table[no-heading](quotas.metric,quotas.limit,quotas.usage)" \
+  | grep -E "NVIDIA_L4|NVIDIA_T4|NVIDIA_A100" | column -t
 
 echo
 info "project-wide: GPUS_ALL_REGIONS"
 if ! gcloud compute project-info describe --project "$PROJECT" \
-      --flatten="quotas[]" --filter="quotas.metric=GPUS_ALL_REGIONS" \
-      --format="table(quotas.metric,quotas.limit,quotas.usage)" | grep -q GPUS_ALL_REGIONS; then
+      --flatten="quotas[]" --format="table[no-heading](quotas.metric,quotas.limit,quotas.usage)" \
+      | grep GPUS_ALL_REGIONS | column -t | grep GPUS_ALL_REGIONS; then
   warn "GPUS_ALL_REGIONS is not listed for this project. That usually means the billing account is"
   warn "still on the Free Trial, which cannot use GPUs at all. Upgrade to a paid account first:"
   warn "  https://console.cloud.google.com/billing?project=$PROJECT  (Upgrade button)"
