@@ -205,26 +205,44 @@ source scripts/gcp/env.sh
 scripts/gcp/00_setup_project.sh        # APIs, bucket, service account (once)
 scripts/gcp/01_check_quota.sh          # L4 + GPUS_ALL_REGIONS quota; request if 0 (do this early)
 scripts/gcp/02_push_code_and_data.sh   # tarball code -> GCS (dataset optional; VM builds it if absent)
-scripts/gcp/03_create_vm.sh            # create spot L4 VM; startup.sh builds data if needed, trains configs/lora.yaml
+scripts/gcp/03_create_vm.sh            # create spot L4 VM; runs the queue: build data if needed, then A -> B -> C
 scripts/gcp/04_logs.sh                 # tail /var/log/viveka-train.log
-scripts/gcp/05_fetch_results.sh        # pull runs/<RUN_NAME> (best/, eval_report.json, ...) into Cloud Shell
+scripts/gcp/05_fetch_results.sh        # pull all runs into Cloud Shell and print a comparison table
 scripts/gcp/99_teardown.sh             # delete the VM (add --bucket to delete the bucket too)
 ```
 
-First boot does three things in order: dataset build (~10–20 min for the default 30k rows per
-source, uploaded to `$BUCKET/data/processed`), training, evaluation. Later runs skip the build.
+Stop after `01_check_quota.sh` the first time: if L4 or `GPUS_ALL_REGIONS` quota is 0, request it
+and wait for approval before `03_create_vm.sh`.
 
-Launch a different experiment on the same VM (after the first finishes and the VM has stopped):
+`03_create_vm.sh` returns immediately; the VM then works through `RUN_QUEUE` on its own. Default:
+
+```
+frozen-v1:configs/base.yaml;lora-v1:configs/lora.yaml;full-v1:configs/full.yaml
+```
+
+i.e. Experiment A (fast, minutes), then B, then C, in the plan's order. First boot also builds the
+dataset (~10–20 min for 30k rows per source) and uploads it to `$BUCKET/data/processed`; later
+boots reuse it. Each run writes `$BUCKET/runs/<name>/` and a `DONE` marker; the VM stops itself
+after the last one. Total for the default queue: roughly 4–5 hours, about $2 on spot.
+
+Preempted? Run `03_create_vm.sh` again. Finished runs are skipped, the interrupted one resumes
+from its last checkpoint.
+
+Other queues:
 
 ```bash
-RUN_NAME=full-v1 TRAIN_CONFIG=configs/full.yaml scripts/gcp/03_create_vm.sh
+RUN_QUEUE="lora-lr1e-4:configs/lora.yaml" scripts/gcp/03_create_vm.sh        # one run
+RUN_QUEUE="a:configs/base.yaml;b:configs/lora.yaml" scripts/gcp/03_create_vm.sh
 ```
+
+Per-run hyperparameter changes go in a copy of the config (`configs/lora_lr1e-4.yaml`), pushed
+with `02_push_code_and_data.sh`.
 
 Rebuild the dataset with different settings: delete `$BUCKET/data/processed` and set
 `DATA_SOURCES` / `DATA_LIMIT` / `EVAL_LIMIT` before `03_create_vm.sh`.
 
-After iterating on code locally: `git push`, then in Cloud Shell `git pull && scripts/gcp/02_push_code_and_data.sh`
-and start the VM again for a new `RUN_NAME`.
+After iterating on code locally: `git push`, then in Cloud Shell
+`git pull && scripts/gcp/02_push_code_and_data.sh` and launch a new queue with new run names.
 
 ### Requirements
 

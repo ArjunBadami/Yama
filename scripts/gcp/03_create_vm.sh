@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
-# Create (or restart) the training VM. Training starts automatically via startup.sh.
+# Create (or restart) the training VM. The run queue starts automatically via startup.sh.
 #
-#   scripts/gcp/03_create_vm.sh                 # spot L4, config from env.sh
-#   RUN_NAME=full-v1 TRAIN_CONFIG=configs/full.yaml scripts/gcp/03_create_vm.sh
+#   scripts/gcp/03_create_vm.sh                                   # default queue: A -> B -> C
+#   RUN_QUEUE="full-v2:configs/full.yaml" scripts/gcp/03_create_vm.sh   # a single run
+#   RUN_QUEUE="a:configs/base.yaml;b:configs/lora.yaml" scripts/gcp/03_create_vm.sh
 #
-# If the VM already exists it is (re)started with updated metadata, which is
-# how you launch a second run on the same machine.
+# If the VM already exists it is (re)started with updated metadata. Runs that already
+# have a DONE marker in GCS are skipped, so re-launching is always safe.
 set -euo pipefail
 cd "$(dirname "$0")/../.." && source scripts/gcp/env.sh
 
-META="viveka-bucket=$BUCKET,viveka-run-name=$RUN_NAME,viveka-train-config=$TRAIN_CONFIG,viveka-shutdown-when-done=$SHUTDOWN_WHEN_DONE"
+# Validate the queue: every entry must be name:config and the config must exist.
+IFS=';' read -ra QUEUE <<< "$RUN_QUEUE"
+[ "${#QUEUE[@]}" -gt 0 ] || die "RUN_QUEUE is empty"
+for entry in "${QUEUE[@]}"; do
+  name="${entry%%:*}"; cfg="${entry#*:}"
+  [ -n "$name" ] && [ "$name" != "$entry" ] || die "bad RUN_QUEUE entry '$entry' (want name:config)"
+  [ -f "$cfg" ] || die "config '$cfg' for run '$name' not found"
+done
+
+# gcloud splits --metadata on commas, so the queue uses ';' between entries.
+META="viveka-bucket=$BUCKET,viveka-run-queue=$RUN_QUEUE,viveka-shutdown-when-done=$SHUTDOWN_WHEN_DONE"
 META="$META,viveka-data-sources=${DATA_SOURCES// /+},viveka-data-limit=$DATA_LIMIT,viveka-eval-limit=$EVAL_LIMIT,viveka-data-pos-rate=$DATA_POS_RATE"
 META="$META,install-nvidia-driver=True"
 
@@ -46,10 +57,17 @@ fi
 
 cat <<EOF
 
-Training is starting on the VM. Follow along with:
-  scripts/gcp/04_logs.sh                       # tail the training log
-  gcloud storage ls $BUCKET/runs/$RUN_NAME/    # checkpoints as they land
+The VM will run, in order:
+EOF
+for entry in "${QUEUE[@]}"; do printf '  %-14s %s\n' "${entry%%:*}" "${entry#*:}"; done
+cat <<EOF
 
-The VM stops itself when done (SHUTDOWN_WHEN_DONE=$SHUTDOWN_WHEN_DONE). Fetch results with:
+Follow along with:
+  scripts/gcp/04_logs.sh                  # tail the training log
+  gcloud storage ls $BUCKET/runs/         # one folder per run; DONE marker when finished
+
+The VM stops itself after the queue (SHUTDOWN_WHEN_DONE=$SHUTDOWN_WHEN_DONE). Fetch results with:
   scripts/gcp/05_fetch_results.sh
+If the VM is preempted, just run this script again; finished runs are skipped and the
+in-progress run resumes from its last checkpoint.
 EOF

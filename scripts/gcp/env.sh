@@ -27,10 +27,12 @@ export IMAGE_FAMILY="${IMAGE_FAMILY:-pytorch-latest-gpu}"
 export SA_NAME="${SA_NAME:-viveka-train}"
 export SA_EMAIL="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 
-# What to train on the VM
-export TRAIN_CONFIG="${TRAIN_CONFIG:-configs/lora.yaml}"
-export RUN_NAME="${RUN_NAME:-lora-modernbert-base}"
-export SHUTDOWN_WHEN_DONE="${SHUTDOWN_WHEN_DONE:-true}" # stop the VM after training to stop billing
+# What to train on the VM: a queue of "<run_name>:<config>" entries separated by ';'.
+# Runs execute in order in a single VM boot. Finished runs (DONE marker in GCS) are skipped,
+# so re-launching after a preemption continues with the unfinished ones.
+# Default is the plan's order: A (frozen) -> B (LoRA) -> C (full).
+export RUN_QUEUE="${RUN_QUEUE:-frozen-v1:configs/base.yaml;lora-v1:configs/lora.yaml;full-v1:configs/full.yaml}"
+export SHUTDOWN_WHEN_DONE="${SHUTDOWN_WHEN_DONE:-true}" # stop the VM after the queue to stop billing
 
 # Dataset. If $BUCKET/data/processed/train.jsonl does not exist when the VM boots,
 # the VM builds it from these sources and uploads it (so nothing has to be built locally).

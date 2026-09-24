@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # VM startup script. Runs at EVERY boot, including after a spot preemption restart.
-# Idempotent: if the run already finished (DONE marker in GCS) it does nothing;
-# otherwise it pulls code + data, and training resumes from <run>/last/ if present.
 #
-# Configuration comes from instance metadata (set by 02_create_vm.sh):
-#   viveka-bucket, viveka-run-name, viveka-train-config, viveka-shutdown-when-done
+# Executes a queue of runs ("<name>:<config>;<name>:<config>;...") in order. A run with a
+# DONE marker in GCS is skipped; an unfinished run resumes from <run>/last/ if present.
+# So re-starting the VM after a preemption always continues where it left off.
+#
+# Configuration comes from instance metadata (set by 03_create_vm.sh):
+#   viveka-bucket, viveka-run-queue, viveka-shutdown-when-done,
+#   viveka-data-sources, viveka-data-limit, viveka-eval-limit, viveka-data-pos-rate
 set -uo pipefail
 LOG=/var/log/viveka-train.log
 exec > >(tee -a "$LOG") 2>&1
@@ -12,12 +15,14 @@ echo "===== viveka startup $(date -u +%FT%TZ) ====="
 
 md() { curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1"; }
 BUCKET="$(md viveka-bucket)"
-RUN_NAME="$(md viveka-run-name)"
-TRAIN_CONFIG="$(md viveka-train-config)"
+RUN_QUEUE="$(md viveka-run-queue)"
 SHUTDOWN="$(md viveka-shutdown-when-done || echo true)"
 ZONE="$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | awk -F/ '{print $NF}')"
 NAME="$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/name)"
-RUN_GCS="$BUCKET/runs/$RUN_NAME"
+[ -n "$BUCKET" ] && [ -n "$RUN_QUEUE" ] || { echo "missing viveka-bucket / viveka-run-queue metadata"; exit 1; }
+
+IFS=';' read -ra QUEUE <<< "$RUN_QUEUE"
+echo "queue (${#QUEUE[@]}):"; for e in "${QUEUE[@]}"; do echo "  ${e%%:*}  <-  ${e#*:}"; done
 
 finish() {
   if [ "$SHUTDOWN" = "true" ]; then
@@ -26,8 +31,13 @@ finish() {
   fi
 }
 
-if gcloud storage ls "$RUN_GCS/DONE" >/dev/null 2>&1; then
-  echo "run $RUN_NAME already finished; nothing to do"
+is_done() { gcloud storage ls "$BUCKET/runs/$1/DONE" >/dev/null 2>&1; }
+
+# Anything left to do? If not, don't even wait for the GPU.
+PENDING=0
+for e in "${QUEUE[@]}"; do is_done "${e%%:*}" || PENDING=$((PENDING + 1)); done
+if [ "$PENDING" -eq 0 ]; then
+  echo "all runs in the queue already finished; nothing to do"
   finish; exit 0
 fi
 
@@ -68,24 +78,38 @@ else
 fi
 [ -f data/processed/train.jsonl ] || { echo "no train.jsonl after data step"; exit 1; }
 
-# --- train (resumes automatically if runs/<run>/last exists in GCS) --------
-$PY -m viveka.train --config "$TRAIN_CONFIG" \
-  "run_name=$RUN_NAME" "output.dir=runs/$RUN_NAME" "output.gcs_dir=$RUN_GCS"
-STATUS=$?
-if [ $STATUS -ne 0 ]; then
-  echo "training exited with $STATUS; leaving VM up for debugging (set viveka-shutdown-when-done=false to keep)"
-  gcloud storage cp "$LOG" "$RUN_GCS/startup.log" || true
-  exit $STATUS
-fi
+# --- run the queue ---------------------------------------------------------
+FAILED=0
+for entry in "${QUEUE[@]}"; do
+  RUN_NAME="${entry%%:*}"; TRAIN_CONFIG="${entry#*:}"; RUN_GCS="$BUCKET/runs/$RUN_NAME"
+  if is_done "$RUN_NAME"; then echo "--- $RUN_NAME already done; skipping"; continue; fi
+  echo "===== run $RUN_NAME ($TRAIN_CONFIG) start $(date -u +%FT%TZ) ====="
 
-# --- evaluate on the held-out automatic eval set ---------------------------
-if [ -f data/processed/eval.jsonl ]; then
-  $PY -m viveka.evaluate --ckpt "runs/$RUN_NAME/best" --data data/processed/eval.jsonl \
-    --out "runs/$RUN_NAME/eval_report.json" --dump-predictions "runs/$RUN_NAME/eval_preds.jsonl" \
-    --batch-size 64
+  # resumes automatically if runs/<run>/last exists in GCS
+  $PY -m viveka.train --config "$TRAIN_CONFIG" \
+    "run_name=$RUN_NAME" "output.dir=runs/$RUN_NAME" "output.gcs_dir=$RUN_GCS"
+  STATUS=$?
+  if [ $STATUS -ne 0 ]; then
+    echo "!!! $RUN_NAME: training exited with $STATUS; continuing with the next run"
+    gcloud storage cp "$LOG" "$RUN_GCS/startup.log" || true
+    FAILED=$((FAILED + 1)); continue
+  fi
+
+  if [ -f data/processed/eval.jsonl ]; then
+    $PY -m viveka.evaluate --ckpt "runs/$RUN_NAME/best" --data data/processed/eval.jsonl \
+      --out "runs/$RUN_NAME/eval_report.json" --dump-predictions "runs/$RUN_NAME/eval_preds.jsonl" \
+      --batch-size 64
+  fi
+  gcloud storage rsync -r "runs/$RUN_NAME" "$RUN_GCS"
+  gcloud storage cp "$LOG" "$RUN_GCS/startup.log" || true
+  date -u +%FT%TZ | gcloud storage cp - "$RUN_GCS/DONE"
+  echo "===== run $RUN_NAME done $(date -u +%FT%TZ) ====="
+done
+
+if [ "$FAILED" -gt 0 ]; then
+  echo "$FAILED run(s) failed; leaving the VM up for debugging. Stop it manually when finished:"
+  echo "  gcloud compute instances stop $NAME --zone $ZONE"
+  exit 1
 fi
-gcloud storage rsync -r "runs/$RUN_NAME" "$RUN_GCS"
-gcloud storage cp "$LOG" "$RUN_GCS/startup.log" || true
-date -u +%FT%TZ | gcloud storage cp - "$RUN_GCS/DONE"
-echo "===== done $(date -u +%FT%TZ) ====="
+echo "===== queue complete $(date -u +%FT%TZ) ====="
 finish
