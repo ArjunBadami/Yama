@@ -1,0 +1,7 @@
+# Shell scripts run on Linux VMs; CRLF would break the shebang and gcloud startup-script.
+*.sh    text eol=lf
+*.py    text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.jsonl -text
