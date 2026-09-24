@@ -12,9 +12,64 @@ the question. It is a small bidirectional encoder (ModernBERT-base) with a singl
 head, trained with binary cross-entropy and temperature-calibrated so that thresholds like
 `P > 0.98` mean something. Background and rationale: `system1_models_jev_laya_gcp_build_plan.md`.
 
+## Architecture
+
 ```
-question + evidence -> tokenizer -> ModernBERT -> [CLS] -> Linear(d,1) -> sigmoid(z/T) -> P(sufficient)
+question, evidence[]
+        │
+        ▼
+ formatting.py      "question: {q}"  ‖  "evidence:\n- e1\n- e2 ..."      (text pair)
+        │
+        ▼
+ tokenizer          [CLS] question tokens [SEP] evidence tokens [SEP]     (truncates evidence only)
+        │
+        ▼
+ ModernBERT-base    22 layers, d=768, bidirectional attention, 8192-token context
+        │           every token attends to every other: the question sees all the evidence
+        ▼           and each evidence sentence sees the question and the other sentences
+ pooling            h = hidden state at [CLS]   (or mean over non-pad tokens)         ∈ R^768
+        │
+        ▼
+ head               z = w·h + b                  one linear layer, 769 parameters       ∈ R
+        │
+        ▼
+ calibration        z / T                        T fitted post hoc on validation, stored in checkpoint
+        │
+        ▼
+ sigmoid            P(sufficient) = 1 / (1 + e^{-z/T})                                  ∈ (0,1)
 ```
+
+No decoder, no token generation, no fixed label vocabulary, no variable-size softmax. The
+entire task-specific part of the network is the 769-parameter head; everything else is the
+pretrained encoder, adapted as little as the data requires.
+
+**Why an encoder.** The output is one number, so there is nothing to generate. A bidirectional
+encoder reads the whole input at once and is ~20–100× smaller and cheaper than the decoders
+usually asked to produce this judgment as JSON. ModernBERT specifically because it is a modern
+(2024) encoder with long context, so distractor-heavy evidence fits without truncation.
+
+**Training modes** (`model.mode` in config). Same architecture, same loss; the difference is
+which weights may move.
+
+| mode | trains | trainable params | when |
+|---|---|---|---|
+| `frozen` | head only | 769 | how much the pretrained representation already knows |
+| `lora` | head + rank-16 LoRA adapters on `Wqkv`, `Wo`, `Wi` in every layer | ~3.4M | default; safe on small data, adapter is a few MB |
+| `full` | head + all encoder weights | ~150M | max capacity; lower encoder LR (3e-5) than head (1e-3) |
+
+LoRA keeps each pretrained weight matrix \(W\) frozen and learns a low-rank update
+\(W x + B A x\) with \(A \in \mathbb{R}^{r \times d}\), \(B \in \mathbb{R}^{d \times r}\), \(r=16\).
+At 150M params LoRA vs full is not a hardware decision (both fit on one L4); running both
+tells us whether the task needs the encoder to change or only needs a new output interface.
+
+**Loss.** Binary cross-entropy on the raw logit \(z\), optional `pos_weight` for class
+imbalance. Model selection by validation log loss. Temperature \(T\) is fitted afterwards by
+minimising BCE of \(\sigma(z/T)\) on validation; it rescales confidence without changing
+rankings, so accuracy/AUROC are untouched while ECE and thresholds improve.
+
+**Output contract.** `P(sufficient)` is used three ways by an agent: `P ≥ hi` (default 0.98)
+→ hand off to the reasoning model; `P < lo` (0.20) → retrieve more; otherwise → uncertain,
+escalate. False-sufficient is the expensive error, hence the asymmetric thresholds.
 
 ## Layout
 
