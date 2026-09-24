@@ -70,13 +70,15 @@ PY="$(command -v python3)"
 if [ -x /opt/conda/bin/python ]; then PY=/opt/conda/bin/python; fi
 echo "python: $PY ($($PY --version))"
 $PY -m pip install -q --upgrade pip
-$PY -m pip install -q -e . || { echo "pip install failed"; exit 1; }
-# The DLVM image ships a torchaudio built against its own torch. Installing this
-# package upgrades torch and leaves that .so unloadable, and transformers imports
-# torchaudio while loading ModernBERT. Reinstall torchaudio so it matches torch.
-$PY -m pip install -q -U torchaudio || { echo "torchaudio install failed"; exit 1; }
+$PY -m pip install -q -e . || { echo "pip install failed"; finish; exit 1; }
+# The DLVM image's torch and a pip-upgraded torchaudio end up as an unmatched pair
+# (undefined symbol torch_library_impl). Transformers imports torchaudio while
+# loading ModernBERT. Replace both from the same CUDA wheel index so they match.
+$PY -m pip install -q --force-reinstall torch torchaudio \
+  --index-url https://download.pytorch.org/whl/cu129 \
+  || { echo "torch/torchaudio reinstall failed"; finish; exit 1; }
 $PY -c "import torch; from transformers.models.modernbert.modeling_modernbert import ModernBertModel; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.get_device_name(0)); print('modernbert import ok', ModernBertModel.__name__)" \
-  || { echo "torch/modernbert import failed"; exit 1; }
+  || { echo "torch/modernbert import failed"; finish; exit 1; }
 
 # --- data ------------------------------------------------------------------
 mkdir -p data/processed
