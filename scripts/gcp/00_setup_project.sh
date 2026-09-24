@@ -18,16 +18,32 @@ else
 fi
 
 info "service account $SA_EMAIL"
-if ! gcloud iam service-accounts describe "$SA_EMAIL" >/dev/null 2>&1; then
+if ! gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT" >/dev/null 2>&1; then
   gcloud iam service-accounts create "$SA_NAME" --display-name "Viveka training VM" --project "$PROJECT"
 fi
-for role in roles/storage.objectAdmin roles/aiplatform.user roles/logging.logWriter roles/monitoring.metricWriter; do
-  gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA_EMAIL" --role "$role" \
-    --condition=None --quiet >/dev/null
+# IAM is eventually consistent: a freshly created SA can be "not found" by policy
+# bindings for several seconds. Wait until it is visible, then bind with retries.
+for i in $(seq 1 20); do
+  gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT" >/dev/null 2>&1 && break
+  sleep 3
 done
-# Allow the VM to stop itself when training finishes.
-gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA_EMAIL" \
-  --role roles/compute.instanceAdmin.v1 --condition=None --quiet >/dev/null
+bind_role() {
+  local role="$1"
+  for attempt in $(seq 1 6); do
+    if gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA_EMAIL" --role "$role" \
+         --condition=None --quiet >/dev/null 2>&1; then
+      info "  bound $role"; return 0
+    fi
+    sleep $((attempt * 3))
+  done
+  die "could not bind $role to $SA_EMAIL after retries"
+}
+# storage: data/checkpoints; aiplatform: teacher calls from the VM; logging/monitoring: agent;
+# compute.instanceAdmin.v1: lets the VM stop itself when the queue finishes.
+for role in roles/storage.objectAdmin roles/aiplatform.user roles/logging.logWriter \
+            roles/monitoring.metricWriter roles/compute.instanceAdmin.v1; do
+  bind_role "$role"
+done
 
 info "billing budget (\$$BUDGET_USD/month, alerts at 50/90/100%)"
 BILLING_ACCOUNT="$(gcloud billing projects describe "$PROJECT" --format='value(billingAccountName)' 2>/dev/null || true)"

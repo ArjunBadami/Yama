@@ -6,13 +6,19 @@ cd "$(dirname "$0")/../.." && source scripts/gcp/env.sh
 
 info "GPU quotas in $REGION (limit / usage)"
 gcloud compute regions describe "$REGION" --project "$PROJECT" \
-  --format="table(quotas.metric,quotas.limit,quotas.usage)" \
-  | grep -Ei "metric|NVIDIA_L4|PREEMPTIBLE_NVIDIA_L4|NVIDIA_A100|GPUS_ALL_REGIONS" || true
+  --flatten="quotas[]" --filter="quotas.metric~'NVIDIA_L4|NVIDIA_T4|NVIDIA_A100'" \
+  --format="table(quotas.metric,quotas.limit,quotas.usage)"
 
 echo
 info "project-wide: GPUS_ALL_REGIONS"
-gcloud compute project-info describe --project "$PROJECT" \
-  --format="table(quotas.metric,quotas.limit,quotas.usage)" | grep -Ei "metric|GPUS_ALL_REGIONS" || true
+if ! gcloud compute project-info describe --project "$PROJECT" \
+      --flatten="quotas[]" --filter="quotas.metric=GPUS_ALL_REGIONS" \
+      --format="table(quotas.metric,quotas.limit,quotas.usage)" | grep -q GPUS_ALL_REGIONS; then
+  warn "GPUS_ALL_REGIONS is not listed for this project. That usually means the billing account is"
+  warn "still on the Free Trial, which cannot use GPUs at all. Upgrade to a paid account first:"
+  warn "  https://console.cloud.google.com/billing?project=$PROJECT  (Upgrade button)"
+  warn "then request GPUS_ALL_REGIONS >= 1 at the quotas page."
+fi
 
 cat <<EOF
 
