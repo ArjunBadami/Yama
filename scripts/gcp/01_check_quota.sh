@@ -22,10 +22,12 @@ gcloud compute regions describe "$REGION" --project "$PROJECT" --format=json | s
 echo
 info "project-wide: GPUS_ALL_REGIONS"
 if ! gcloud compute project-info describe --project "$PROJECT" --format=json | show_quotas - "GPUS_ALL_REGIONS"; then
-  warn "GPUS_ALL_REGIONS is not listed for this project. That usually means the billing account is"
-  warn "still on the Free Trial, which cannot use GPUs at all. Upgrade to a paid account first:"
-  warn "  https://console.cloud.google.com/billing?project=$PROJECT  (Upgrade button)"
-  warn "then request GPUS_ALL_REGIONS >= 1 at the quotas page."
+  info "GPUS_ALL_REGIONS is not surfaced via project-info on this project (it lives in Cloud Quotas)."
+  info "If the regional L4 limits above are > 0 you are almost certainly fine: proceed to 03_create_vm.sh."
+  info "If VM creation fails mentioning GPUS_ALL_REGIONS, request it here:"
+  info "  https://console.cloud.google.com/iam-admin/quotas?project=$PROJECT  (filter: 'GPUs (all regions)')"
+  info "If ALL GPU limits are 0, the billing account may be on Free Trial, which cannot use GPUs; upgrade at"
+  info "  https://console.cloud.google.com/billing?project=$PROJECT"
 fi
 
 cat <<EOF
