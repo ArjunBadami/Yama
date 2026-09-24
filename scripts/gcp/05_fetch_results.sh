@@ -13,7 +13,7 @@ gcloud storage rsync -r "$SRC" "$DST" --exclude='.*trainer_state\.pt$'
 echo
 if [ -f "$DST/eval_report.json" ]; then
   info "eval summary"
-  python - "$DST/eval_report.json" <<'EOF'
+  python3 - "$DST/eval_report.json" <<'EOF'
 import json, sys
 r = json.load(open(sys.argv[1]))
 print(f"n={r['n']} logloss={r['log_loss']:.4f} brier={r['brier']:.4f} auroc={r['auroc']:.4f} ece={r['ece']:.4f} T={r.get('temperature',1):.3f}")

@@ -30,8 +30,15 @@ export SA_EMAIL="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 # What to train on the VM
 export TRAIN_CONFIG="${TRAIN_CONFIG:-configs/lora.yaml}"
 export RUN_NAME="${RUN_NAME:-lora-modernbert-base}"
-export DATA_DIR="${DATA_DIR:-data/processed}"           # local dir synced to $BUCKET/data/processed
 export SHUTDOWN_WHEN_DONE="${SHUTDOWN_WHEN_DONE:-true}" # stop the VM after training to stop billing
+
+# Dataset. If $BUCKET/data/processed/train.jsonl does not exist when the VM boots,
+# the VM builds it from these sources and uploads it (so nothing has to be built locally).
+export DATA_DIR="${DATA_DIR:-data/processed}"           # optional local copy to push with 02_push_code_and_data.sh
+export DATA_SOURCES="${DATA_SOURCES:-hotpotqa squad_v2}"
+export DATA_LIMIT="${DATA_LIMIT:-30000}"                 # source rows per dataset (train split)
+export EVAL_LIMIT="${EVAL_LIMIT:-2000}"                  # source rows per dataset (validation split -> eval.jsonl)
+export DATA_POS_RATE="${DATA_POS_RATE:-0.5}"             # downsample train to this positive rate
 
 # Colour helpers
 info()  { printf '\033[1;34m[viveka]\033[0m %s\n' "$*"; }

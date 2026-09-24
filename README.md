@@ -140,7 +140,9 @@ Sources (all public, no auth):
   high-overlap `relevant_insufficient` examples.
 - **toy**: offline templates for smoke tests.
 
-Build the v1 training set (downloads ~1GB from the Hugging Face hub; a few minutes):
+Build the v1 training set (downloads ~1GB from the Hugging Face hub; a few minutes). You normally
+don't run this by hand: the GCP VM builds it on first boot if the bucket has no dataset (see below).
+To build locally anyway, e.g. to inspect examples:
 
 ```powershell
 python -m viveka.datasets.build --sources hotpotqa squad_v2 --limit 30000 --eval-limit 2000 `
@@ -153,9 +155,10 @@ should be curated separately under `data/eval/`.
 
 ### Teacher (Gemini on Vertex AI) — optional, costs API calls
 
-```powershell
-gcloud auth application-default login
-$env:GOOGLE_CLOUD_PROJECT="<project>"
+Run from Cloud Shell (already authenticated) or from the VM (service account has `aiplatform.user`):
+
+```bash
+export GOOGLE_CLOUD_PROJECT=propel-dev-486222
 
 # Definition-B labels: sufficient iff Gemini, restricted to the evidence, answers correctly k/k times.
 python -m viveka.teacher.label --in data/processed/val.jsonl --out data/processed/val_teacher.jsonl --k 3 --limit 500
@@ -169,34 +172,71 @@ Responses are cached in `data/teacher_cache/` so reruns are free. Use the labell
 
 ## Training on GCP
 
-Compute Engine, one spot L4, code and data in GCS, checkpoints mirrored to GCS after every save.
-Spot preemption stops the VM; starting it again re-runs the startup script and training resumes
-from `last/`. The VM stops itself when done. Scripts are bash; run them from Git Bash, WSL, or Cloud Shell.
-Defaults live in `scripts/gcp/env.sh` (project `propel-dev-486222`, `us-central1`).
+Project `propel-dev-486222`, account `ab@propelup.ai`, region `us-central1`. Everything runs from
+**Cloud Shell**; nothing uses a local gcloud. Compute Engine, one spot L4, code and data in GCS,
+checkpoints mirrored to GCS after every save. The VM builds the dataset itself on first boot if the
+bucket has none. Spot preemption stops the VM; starting it again re-runs the startup script and
+training resumes from `last/`. The VM stops itself when done. Defaults live in `scripts/gcp/env.sh`.
+
+### 1. Get the code into Cloud Shell
+
+Open [Cloud Shell](https://shell.cloud.google.com/?project=propel-dev-486222) signed in as
+`ab@propelup.ai`. Then either:
+
+**(a) via a git remote** (recommended; lets you edit locally and `git pull` in Cloud Shell):
 
 ```bash
+# locally, once: create an empty private repo on GitHub, then
+git remote add origin git@github.com:<org>/viveka.git && git push -u origin main
+# in Cloud Shell:
+git clone https://github.com/<org>/viveka.git && cd viveka
+```
+
+**(b) via direct upload**: zip the repo locally (exclude `.venv`, `runs`, `data`), use the Cloud Shell
+terminal menu **⋮ → Upload**, then `unzip viveka.zip && cd viveka`.
+
+Make the scripts executable once: `chmod +x scripts/gcp/*.sh`.
+
+### 2. Run the runbook
+
+```bash
+gcloud config set project propel-dev-486222
 source scripts/gcp/env.sh
 scripts/gcp/00_setup_project.sh        # APIs, bucket, service account (once)
 scripts/gcp/01_check_quota.sh          # L4 + GPUS_ALL_REGIONS quota; request if 0 (do this early)
-scripts/gcp/02_push_code_and_data.sh   # tarball code + rsync data/processed -> GCS
-scripts/gcp/03_create_vm.sh            # create spot L4 VM; startup.sh trains configs/lora.yaml
+scripts/gcp/02_push_code_and_data.sh   # tarball code -> GCS (dataset optional; VM builds it if absent)
+scripts/gcp/03_create_vm.sh            # create spot L4 VM; startup.sh builds data if needed, trains configs/lora.yaml
 scripts/gcp/04_logs.sh                 # tail /var/log/viveka-train.log
-scripts/gcp/05_fetch_results.sh        # pull runs/<RUN_NAME> (best/, eval_report.json, ...)
+scripts/gcp/05_fetch_results.sh        # pull runs/<RUN_NAME> (best/, eval_report.json, ...) into Cloud Shell
 scripts/gcp/99_teardown.sh             # delete the VM (add --bucket to delete the bucket too)
 ```
 
-Launch a different experiment on the same VM:
+First boot does three things in order: dataset build (~10–20 min for the default 30k rows per
+source, uploaded to `$BUCKET/data/processed`), training, evaluation. Later runs skip the build.
+
+Launch a different experiment on the same VM (after the first finishes and the VM has stopped):
 
 ```bash
 RUN_NAME=full-v1 TRAIN_CONFIG=configs/full.yaml scripts/gcp/03_create_vm.sh
 ```
 
-Prerequisites your account needs on the project: `roles/owner` or (`roles/editor` +
-`roles/iam.serviceAccountAdmin` + `roles/resourcemanager.projectIamAdmin`). GPU quota is the usual
-blocker; new projects default to 0.
+Rebuild the dataset with different settings: delete `$BUCKET/data/processed` and set
+`DATA_SOURCES` / `DATA_LIMIT` / `EVAL_LIMIT` before `03_create_vm.sh`.
 
-Rough cost: g2-standard-8 spot is ~$0.25–0.35/hr in us-central1; a LoRA epoch over ~100k examples at
-2k tokens is on the order of an hour on an L4. Expect single-digit dollars per experiment.
+After iterating on code locally: `git push`, then in Cloud Shell `git pull && scripts/gcp/02_push_code_and_data.sh`
+and start the VM again for a new `RUN_NAME`.
+
+### Requirements
+
+- `ab@propelup.ai` needs `roles/owner` on the project, or `roles/editor` plus
+  `roles/iam.serviceAccountAdmin` and `roles/resourcemanager.projectIamAdmin` (for `00_setup_project.sh`).
+- GPU quota: `GPUS_ALL_REGIONS ≥ 1` and `PREEMPTIBLE_NVIDIA_L4_GPUS ≥ 1` (spot) or `NVIDIA_L4_GPUS ≥ 1`
+  in `us-central1`. New projects default to 0; `01_check_quota.sh` prints the request link.
+  Approval is usually minutes to a day for L4.
+
+Rough cost: g2-standard-8 spot is ~$0.25–0.35/hr in us-central1; a 3-epoch LoRA run over ~150k
+examples is 1.5–2 hours. Expect about $1 per experiment on spot, under $10 for A/B/C with retries.
+The 200GB boot disk costs ~$20/month while the VM exists (stopped or not); tear it down between sessions.
 
 ## Experiments
 

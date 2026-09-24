@@ -9,7 +9,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.." && source scripts/gcp/env.sh
 
-META="viveka-bucket=$BUCKET,viveka-run-name=$RUN_NAME,viveka-train-config=$TRAIN_CONFIG,viveka-shutdown-when-done=$SHUTDOWN_WHEN_DONE,install-nvidia-driver=True"
+META="viveka-bucket=$BUCKET,viveka-run-name=$RUN_NAME,viveka-train-config=$TRAIN_CONFIG,viveka-shutdown-when-done=$SHUTDOWN_WHEN_DONE"
+META="$META,viveka-data-sources=${DATA_SOURCES// /+},viveka-data-limit=$DATA_LIMIT,viveka-eval-limit=$EVAL_LIMIT,viveka-data-pos-rate=$DATA_POS_RATE"
+META="$META,install-nvidia-driver=True"
 
 if gcloud compute instances describe "$VM_NAME" --zone "$ZONE" --project "$PROJECT" >/dev/null 2>&1; then
   info "VM $VM_NAME exists; updating metadata and starting"

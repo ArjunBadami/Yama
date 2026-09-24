@@ -51,10 +51,24 @@ $PY -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_av
 
 # --- data ------------------------------------------------------------------
 mkdir -p data/processed
-gcloud storage rsync -r "$BUCKET/data/processed" data/processed
+export HF_HUB_DISABLE_SYMLINKS_WARNING=1 TOKENIZERS_PARALLELISM=false HF_HOME=/opt/hf-cache
+if gcloud storage ls "$BUCKET/data/processed/train.jsonl" >/dev/null 2>&1; then
+  gcloud storage rsync -r "$BUCKET/data/processed" data/processed
+else
+  SOURCES="$(md viveka-data-sources || echo hotpotqa+squad_v2)"; SOURCES="${SOURCES//+/ }"
+  LIMIT="$(md viveka-data-limit || echo 30000)"
+  EVAL_LIMIT="$(md viveka-eval-limit || echo 2000)"
+  POS_RATE="$(md viveka-data-pos-rate || echo 0.5)"
+  echo "no dataset in $BUCKET/data/processed; building on the VM from: $SOURCES (limit=$LIMIT eval_limit=$EVAL_LIMIT)"
+  # shellcheck disable=SC2086
+  $PY -m viveka.datasets.build --sources $SOURCES --limit "$LIMIT" --eval-limit "$EVAL_LIMIT" \
+    --target-pos-rate "$POS_RATE" --out data/processed || { echo "dataset build failed"; exit 1; }
+  gcloud storage rsync -r data/processed "$BUCKET/data/processed"
+  echo "dataset uploaded to $BUCKET/data/processed"
+fi
+[ -f data/processed/train.jsonl ] || { echo "no train.jsonl after data step"; exit 1; }
 
 # --- train (resumes automatically if runs/<run>/last exists in GCS) --------
-export HF_HUB_DISABLE_SYMLINKS_WARNING=1 TOKENIZERS_PARALLELISM=false
 $PY -m viveka.train --config "$TRAIN_CONFIG" \
   "run_name=$RUN_NAME" "output.dir=runs/$RUN_NAME" "output.gcs_dir=$RUN_GCS"
 STATUS=$?

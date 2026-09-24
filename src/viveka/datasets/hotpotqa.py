@@ -39,8 +39,14 @@ def _load(split: str, limit: int | None):
     return ds
 
 
-def _row_sentences(row) -> tuple[list[str], list[str], list[str]]:
-    """Return (gold, relevant_distractors, all_sentences_flat)."""
+def _row_sentences(row, prefix_titles: bool = True) -> tuple[list[str], list[str], list[str]]:
+    """Return (gold, relevant_distractors, all_sentences_flat).
+
+    With `prefix_titles`, each sentence becomes "<paragraph title>: <sentence>". Evidence is
+    shuffled and mixed across paragraphs downstream, so without the title a sentence like
+    "It first aired in 2006." loses its referent. Distractor paragraphs get their titles too,
+    so the prefix does not leak the label.
+    """
     titles: list[str] = row["context"]["title"]
     sents: list[list[str]] = row["context"]["sentences"]
     sf_titles: list[str] = row["supporting_facts"]["title"]
@@ -53,6 +59,8 @@ def _row_sentences(row) -> tuple[list[str], list[str], list[str]]:
             s = s.strip()
             if not s:
                 continue
+            if prefix_titles:
+                s = f"{t.strip()}: {s}"
             flat.append(s)
             if (t, j) in gold_keys:
                 gold.append(s)
