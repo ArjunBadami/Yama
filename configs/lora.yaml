@@ -1,0 +1,44 @@
+# Experiment B: ModernBERT-base + LoRA adapters + binary head.
+# The recommended first serious model.
+run_name: lora-modernbert-base
+seed: 42
+
+model:
+  name: answerdotai/ModernBERT-base
+  mode: lora                 # frozen | lora | full
+  pooling: cls               # cls | mean
+  dropout: 0.1
+  max_length: 2048           # ModernBERT supports up to 8192
+  attn_implementation: auto  # auto | sdpa | flash_attention_2 | eager
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    # ModernBERT module names. Wo matches both attention and MLP output projections.
+    target_modules: [Wqkv, Wo, Wi]
+
+data:
+  train: data/processed/train.jsonl
+  val: data/processed/val.jsonl
+  max_train_examples: null
+
+train:
+  epochs: 3
+  batch_size: 16
+  grad_accum: 1
+  lr: 2.0e-4                 # LoRA params + head
+  encoder_lr: 2.0e-5         # only used in mode=full
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  max_grad_norm: 1.0
+  bf16: auto                 # auto | true | false
+  eval_every_steps: 500
+  save_every_steps: 500
+  log_every_steps: 20
+  num_workers: 2
+  # Weight applied to the positive (sufficient) class in BCE. 1.0 = balanced.
+  pos_weight: 1.0
+
+output:
+  dir: runs/lora-modernbert-base
+  gcs_dir: null              # e.g. gs://viveka-artifacts/runs/lora-modernbert-base

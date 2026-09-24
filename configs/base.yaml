@@ -1,0 +1,39 @@
+# Experiment A: frozen ModernBERT-base, train only the classification head.
+# Cheap baseline that tells us how much the pretrained representation already knows.
+# Note: ModernBERT has no CLS-level pretraining objective, so mean pooling is the
+# better choice when the encoder is frozen.
+run_name: frozen-modernbert-base
+seed: 42
+
+model:
+  name: answerdotai/ModernBERT-base
+  mode: frozen
+  pooling: mean
+  dropout: 0.1
+  max_length: 2048
+  attn_implementation: auto
+
+data:
+  train: data/processed/train.jsonl
+  val: data/processed/val.jsonl
+  max_train_examples: null
+
+train:
+  epochs: 3
+  batch_size: 32
+  grad_accum: 1
+  lr: 1.0e-3
+  encoder_lr: 0.0
+  weight_decay: 0.0
+  warmup_ratio: 0.02
+  max_grad_norm: 1.0
+  bf16: auto
+  eval_every_steps: 500
+  save_every_steps: 500
+  log_every_steps: 20
+  num_workers: 2
+  pos_weight: 1.0
+
+output:
+  dir: runs/frozen-modernbert-base
+  gcs_dir: null

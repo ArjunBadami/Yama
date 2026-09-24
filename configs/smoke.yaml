@@ -1,0 +1,44 @@
+# CPU smoke test: tiny *randomly initialised* ModernBERT + LoRA on the offline toy curriculum.
+# Verifies the whole pipeline (data -> train -> checkpoint -> evaluate -> predict)
+# without a GPU or any GCP resources, using the same tokenizer and module names as
+# the real ModernBERT-base. Not a real model; expect weak metrics.
+run_name: smoke
+seed: 0
+
+model:
+  name: hf-tiny-v2/tiny-random-ModernBertModel
+  mode: lora
+  pooling: cls
+  dropout: 0.1
+  max_length: 256
+  attn_implementation: eager
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.0
+    target_modules: [Wqkv, Wo, Wi]
+
+data:
+  train: data/processed/toy/train.jsonl
+  val: data/processed/toy/val.jsonl
+  max_train_examples: null
+
+train:
+  epochs: 2
+  batch_size: 16
+  grad_accum: 1
+  lr: 2.0e-3
+  encoder_lr: 0.0
+  weight_decay: 0.0
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  bf16: false
+  eval_every_steps: 50
+  save_every_steps: 50
+  log_every_steps: 10
+  num_workers: 0
+  pos_weight: 1.0
+
+output:
+  dir: runs/smoke
+  gcs_dir: null

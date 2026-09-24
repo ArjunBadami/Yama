@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Data and artifacts (live in GCS, not git)
+data/raw/
+data/processed/
+data/eval/
+!data/**/.gitkeep
+runs/
+checkpoints/
+*.pt
+*.safetensors
+
+# Hugging Face caches
+.cache/
+
+# Secrets / local env
+.env
+*.json.key
+service-account*.json
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "viveka"
+version = "0.1.0"
+description = "Viveka: a System 1 evidence-sufficiency model. (question, evidence) -> P(sufficient)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.48",
+    "peft>=0.13",
+    "datasets>=2.19",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# Teacher / synthetic data generation via Gemini on Vertex AI.
+teacher = ["google-genai>=1.0"]
+# Faster attention on Ampere+/Ada GPUs (L4, A100). Install on the GPU VM only.
+gpu = ["flash-attn>=2.6"]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+viveka-build-data = "viveka.datasets.build:main"
+viveka-train = "viveka.train:main"
+viveka-evaluate = "viveka.evaluate:main"
+viveka-predict = "viveka.inference:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "RUF"]
+ignore = ["E501", "RUF012"]
