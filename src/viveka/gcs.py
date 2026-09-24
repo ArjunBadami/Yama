@@ -45,5 +45,12 @@ def pull_if_missing(gcs_dir: str, local_dir: str | Path) -> bool:
     local = Path(local_dir)
     if (local / "last").exists():
         return False
+    exe = _gcloud()
+    if exe is None:
+        return False
+    # A first run has no remote prefix yet. rsync treats that as an error; skip it.
+    probe = subprocess.run([exe, "storage", "ls", str(gcs_dir)], capture_output=True, text=True)
+    if probe.returncode != 0:
+        return False
     local.mkdir(parents=True, exist_ok=True)
     return rsync(gcs_dir, local)

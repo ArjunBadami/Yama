@@ -71,7 +71,12 @@ if [ -x /opt/conda/bin/python ]; then PY=/opt/conda/bin/python; fi
 echo "python: $PY ($($PY --version))"
 $PY -m pip install -q --upgrade pip
 $PY -m pip install -q -e . || { echo "pip install failed"; exit 1; }
-$PY -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+# The DLVM image ships a torchaudio built against its own torch. Installing this
+# package upgrades torch and leaves that .so unloadable, and transformers imports
+# torchaudio while loading ModernBERT. Reinstall torchaudio so it matches torch.
+$PY -m pip install -q -U torchaudio || { echo "torchaudio install failed"; exit 1; }
+$PY -c "import torch; from transformers.models.modernbert.modeling_modernbert import ModernBertModel; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.get_device_name(0)); print('modernbert import ok', ModernBertModel.__name__)" \
+  || { echo "torch/modernbert import failed"; exit 1; }
 
 # --- data ------------------------------------------------------------------
 mkdir -p data/processed
@@ -121,8 +126,8 @@ for entry in "${QUEUE[@]}"; do
 done
 
 if [ "$FAILED" -gt 0 ]; then
-  echo "$FAILED run(s) failed; leaving the VM up for debugging. Stop it manually when finished:"
-  echo "  gcloud compute instances stop $NAME --zone $ZONE"
+  echo "$FAILED run(s) failed. Logs are in $BUCKET/runs/<name>/startup.log. Stopping the VM."
+  finish
   exit 1
 fi
 echo "===== queue complete $(date -u +%FT%TZ) ====="
