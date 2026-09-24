@@ -4,8 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.." && source scripts/gcp/env.sh
 
-if gcloud compute instances describe "$VM_NAME" --zone "$ZONE" --project "$PROJECT" >/dev/null 2>&1; then
-  info "deleting VM $VM_NAME"
+if resolve_vm_zone; then
+  info "deleting VM $VM_NAME in $ZONE"
   gcloud compute instances delete "$VM_NAME" --zone "$ZONE" --project "$PROJECT" --quiet
 else
   info "no VM named $VM_NAME"

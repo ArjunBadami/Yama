@@ -4,7 +4,9 @@
 
 export PROJECT="${PROJECT:-propel-dev-486222}"
 export REGION="${REGION:-us-central1}"
-export ZONE="${ZONE:-us-central1-a}"
+# Tried in order. Spot L4 capacity moves between zones; a is often the first to stock out.
+export ZONES="${ZONES:-us-central1-b us-central1-c us-central1-a}"
+export ZONE="${ZONE:-}"   # set only to force a single zone
 
 # Artifacts bucket (data, code tarballs, runs). Bucket names are global; keep the project suffix.
 export BUCKET="${BUCKET:-gs://viveka-${PROJECT}}"
@@ -51,6 +53,15 @@ export EVAL_LIMIT="${EVAL_LIMIT:-2000}"                  # source rows per datas
 export DATA_POS_RATE="${DATA_POS_RATE:-0.5}"             # downsample train to this positive rate
 
 # Colour helpers
+# Set ZONE to wherever $VM_NAME actually is. Returns 1 if it does not exist.
+resolve_vm_zone() {
+  local found
+  found="$(gcloud compute instances list --project "$PROJECT" --filter="name=($VM_NAME)" --format='value(zone)' 2>/dev/null | head -1 || true)"
+  [ -n "$found" ] || return 1
+  ZONE="${found##*/}"
+  export ZONE
+}
+
 info()  { printf '\033[1;34m[viveka]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[viveka]\033[0m %s\n' "$*"; }
 die()   { printf '\033[1;31m[viveka]\033[0m %s\n' "$*" >&2; exit 1; }

@@ -24,7 +24,7 @@ META="viveka-bucket=$BUCKET,viveka-run-queue=$RUN_QUEUE,viveka-shutdown-when-don
 META="$META,viveka-data-sources=${DATA_SOURCES// /+},viveka-data-limit=$DATA_LIMIT,viveka-eval-limit=$EVAL_LIMIT,viveka-data-pos-rate=$DATA_POS_RATE"
 META="$META,install-nvidia-driver=True"
 
-if gcloud compute instances describe "$VM_NAME" --zone "$ZONE" --project "$PROJECT" >/dev/null 2>&1; then
+if resolve_vm_zone; then
   info "VM $VM_NAME exists; updating metadata and starting"
   gcloud compute instances add-metadata "$VM_NAME" --zone "$ZONE" --project "$PROJECT" \
     --metadata "$META" --metadata-from-file startup-script=scripts/gcp/startup.sh
@@ -36,23 +36,35 @@ if gcloud compute instances describe "$VM_NAME" --zone "$ZONE" --project "$PROJE
     gcloud compute instances start "$VM_NAME" --zone "$ZONE" --project "$PROJECT"
   fi
 else
-  info "creating $VM_NAME ($MACHINE_TYPE + ${GPU_COUNT}x $GPU_TYPE, spot=$SPOT) in $ZONE"
-  ARGS=(
-    --project "$PROJECT" --zone "$ZONE"
-    --machine-type "$MACHINE_TYPE"
-    --accelerator "type=$GPU_TYPE,count=$GPU_COUNT"
-    --image-project "$IMAGE_PROJECT" --image-family "$IMAGE_FAMILY"
-    --boot-disk-size "${BOOT_DISK_GB}GB" --boot-disk-type pd-balanced
-    --maintenance-policy TERMINATE
-    --service-account "$SA_EMAIL" --scopes cloud-platform
-    --metadata "$META"
-    --metadata-from-file startup-script=scripts/gcp/startup.sh
-  )
-  if [ "$SPOT" = "true" ]; then
-    # STOP on preemption keeps the disk; restarting the VM re-runs startup.sh and resumes training.
-    ARGS+=(--provisioning-model SPOT --instance-termination-action STOP)
+  # Always walk $ZONES. A ZONE left over in the shell (for example us-central1-a from an
+  # earlier run) must not pin us to the zone that just stocked out.
+  read -ra TRY_ZONES <<< "$ZONES"
+  CREATED=""
+  for z in "${TRY_ZONES[@]}"; do
+    info "creating $VM_NAME ($MACHINE_TYPE + ${GPU_COUNT}x $GPU_TYPE, spot=$SPOT) in $z"
+    ARGS=(
+      --project "$PROJECT" --zone "$z"
+      --machine-type "$MACHINE_TYPE"
+      --accelerator "type=$GPU_TYPE,count=$GPU_COUNT"
+      --image-project "$IMAGE_PROJECT" --image-family "$IMAGE_FAMILY"
+      --boot-disk-size "${BOOT_DISK_GB}GB" --boot-disk-type pd-balanced
+      --maintenance-policy TERMINATE
+      --service-account "$SA_EMAIL" --scopes cloud-platform
+      --metadata "$META"
+      --metadata-from-file startup-script=scripts/gcp/startup.sh
+    )
+    if [ "$SPOT" = "true" ]; then
+      # STOP on preemption keeps the disk; restarting the VM re-runs startup.sh and resumes training.
+      ARGS+=(--provisioning-model SPOT --instance-termination-action STOP)
+    fi
+    if gcloud compute instances create "$VM_NAME" "${ARGS[@]}"; then
+      ZONE="$z"; CREATED=1; break
+    fi
+    warn "no capacity in $z; trying the next zone"
+  done
+  if [ -z "$CREATED" ]; then
+    die "no zone had capacity. Retry later, or run: SPOT=false $0"
   fi
-  gcloud compute instances create "$VM_NAME" "${ARGS[@]}"
 fi
 
 cat <<EOF
