@@ -7,6 +7,7 @@ of off-topic sentences (unrelated), we construct:
     all gold, little noise                     -> sufficient    (obvious_sufficient / short_sufficient / multi_hop)
     all gold + lots of relevant noise          -> sufficient    (distractor_heavy)
     gold minus one fact (+ noise)              -> insufficient  (missing_one_fact)
+        skipped when the answer text is still in what remains
     no gold, only relevant noise               -> insufficient  (relevant_insufficient)
     no gold, lots of relevant noise            -> insufficient  (long_insufficient)
     unrelated noise only / empty               -> insufficient  (obvious_insufficient)
@@ -45,6 +46,27 @@ class VariantSpec:
     single_gold_fallback: bool = True
     shuffle_evidence: bool = True
     extra_meta: dict = field(default_factory=dict)
+
+
+def _norm(text: str) -> str:
+    chars = [ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in text]
+    return " ".join("".join(chars).split())
+
+
+def answer_still_in_evidence(answer: str | None, evidence: list[str]) -> bool:
+    """True when the gold answer string is still readable in `evidence`.
+
+    Yes/no answers and very short strings are ignored: "no" and "Bury" show up
+    inside unrelated words often enough that a substring check would throw away
+    real negatives. If this returns True, the example must not be labeled insufficient.
+    """
+    if not answer:
+        return False
+    normalized = _norm(answer)
+    # "no"/"yes" and tiny strings ("2002", "Bury") occur inside unrelated sentences.
+    if normalized in {"yes", "no"} or len(normalized) < 8:
+        return False
+    return normalized in _norm(" ".join(evidence))
 
 
 def _sample(pool: list[str], k: int, rng: random.Random) -> list[str]:
@@ -130,24 +152,36 @@ def build_variants(
     # --- negatives -------------------------------------------------------
     for _ in range(spec.n_missing_one):
         if len(gold) >= 2:
-            drop = rng.randrange(len(gold))
-            kept = [g for j, g in enumerate(gold) if j != drop]
-            noise = _sample(relevant_distractors, rng.randint(0, spec.light_noise_max), rng)
-            out.append(
-                _mk(
-                    question,
-                    kept + noise,
-                    False,
-                    "missing_one_fact",
-                    source,
-                    group_id,
-                    i,
-                    rng,
-                    spec,
-                    {**base_meta, "dropped_fact": gold[drop]},
+            # Try every sentence to drop. Keep the first deletion that actually
+            # removes the answer. If every deletion leaves the answer in view,
+            # emit nothing: that would be a sufficient passage labeled insufficient.
+            drop_order = list(range(len(gold)))
+            rng.shuffle(drop_order)
+            emitted = False
+            for drop in drop_order:
+                kept = [g for j, g in enumerate(gold) if j != drop]
+                noise = _sample(relevant_distractors, rng.randint(0, spec.light_noise_max), rng)
+                evidence = kept + noise
+                if answer_still_in_evidence(answer, evidence):
+                    continue
+                out.append(
+                    _mk(
+                        question,
+                        evidence,
+                        False,
+                        "missing_one_fact",
+                        source,
+                        group_id,
+                        i,
+                        rng,
+                        spec,
+                        {**base_meta, "dropped_fact": gold[drop]},
+                    )
                 )
-            )
-            i += 1
+                emitted = True
+                break
+            if emitted:
+                i += 1
         elif spec.single_gold_fallback and relevant_distractors:
             noise = _sample(relevant_distractors, rng.randint(1, max(1, spec.light_noise_max)), rng)
             out.append(_mk(question, noise, False, "relevant_insufficient", source, group_id, i, rng, spec, base_meta))
