@@ -21,7 +21,7 @@ done
 
 # gcloud splits --metadata on commas, so the queue uses ';' between entries.
 META="viveka-bucket=$BUCKET,viveka-run-queue=$RUN_QUEUE,viveka-shutdown-when-done=$SHUTDOWN_WHEN_DONE,viveka-max-hours=$MAX_VM_HOURS"
-META="$META,viveka-data-sources=${DATA_SOURCES// /+},viveka-data-limit=$DATA_LIMIT,viveka-eval-limit=$EVAL_LIMIT,viveka-data-pos-rate=$DATA_POS_RATE"
+META="$META,viveka-data-sources=${DATA_SOURCES// /+},viveka-data-limit=$DATA_LIMIT,viveka-eval-limit=$EVAL_LIMIT,viveka-data-pos-rate=$DATA_POS_RATE,viveka-data-prefix=$DATA_GCS_PREFIX"
 META="$META,install-nvidia-driver=True"
 
 if resolve_vm_zone; then

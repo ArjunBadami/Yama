@@ -20,6 +20,7 @@ CATEGORIES = (
     "obvious_sufficient",  # all required facts, little noise
     "obvious_insufficient",  # unrelated or empty evidence
     "relevant_insufficient",  # on-topic evidence that does not resolve the question
+    "constraint_mismatch",  # an answer-shaped phrase is present, but it fails a constraint in the question
     "missing_one_fact",  # all but one required fact present
     "distractor_heavy",  # all required facts buried in lots of relevant noise
     "multi_hop",  # sufficiency depends on combining facts

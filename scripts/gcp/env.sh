@@ -47,6 +47,9 @@ export BUDGET_USD="${BUDGET_USD:-50}"
 # Dataset. If $BUCKET/data/processed/train.jsonl does not exist when the VM boots,
 # the VM builds it from these sources and uploads it (so nothing has to be built locally).
 export DATA_DIR="${DATA_DIR:-data/processed}"           # optional local copy to push with 02_push_code_and_data.sh
+# Bucket folder copied to data/processed on the VM. "processed" is lora-v1's data.
+# "processed-v3" is the constraint-mismatch rebuild, used by lora-v2.
+export DATA_GCS_PREFIX="${DATA_GCS_PREFIX:-processed}"
 export DATA_SOURCES="${DATA_SOURCES:-hotpotqa squad_v2}"
 export DATA_LIMIT="${DATA_LIMIT:-30000}"                 # source rows per dataset (train split)
 export EVAL_LIMIT="${EVAL_LIMIT:-2000}"                  # source rows per dataset (validation split -> eval.jsonl)

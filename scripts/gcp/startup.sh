@@ -80,11 +80,15 @@ $PY -c "import torch; from transformers.models.modernbert.modeling_modernbert im
   || { echo "torch/modernbert import failed"; finish; exit 1; }
 
 # --- data ------------------------------------------------------------------
+# viveka-data-prefix selects which bucket folder is copied to data/processed.
+# Configs always read data/processed, so a new dataset is a new prefix, not an edit.
+DATA_PREFIX="$(md viveka-data-prefix || echo processed)"
 mkdir -p data/processed
 export HF_HUB_DISABLE_SYMLINKS_WARNING=1 TOKENIZERS_PARALLELISM=false HF_HOME=/opt/hf-cache
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-if gcloud storage ls "$BUCKET/data/processed/train.jsonl" >/dev/null 2>&1; then
-  gcloud storage rsync -r "$BUCKET/data/processed" data/processed
+if gcloud storage ls "$BUCKET/data/$DATA_PREFIX/train.jsonl" >/dev/null 2>&1; then
+  echo "using dataset gs:// bucket data/$DATA_PREFIX"
+  gcloud storage rsync -r "$BUCKET/data/$DATA_PREFIX" data/processed
 else
   SOURCES="$(md viveka-data-sources || echo hotpotqa+squad_v2)"; SOURCES="${SOURCES//+/ }"
   LIMIT="$(md viveka-data-limit || echo 30000)"
